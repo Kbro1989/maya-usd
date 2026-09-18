@@ -80,6 +80,15 @@ static constexpr char kUSDLayerEditorLabel[] = "USD Layer Editor";
 static constexpr char kAssetResolverDialogItem[] = "Asset Resolver Dialog";
 static constexpr char kAssetResolverDialogLabel[] = "USD Path Editor";
 #endif
+#if defined(WANT_ADSK_USD_DEBUG_TOOLS_BUILD)
+static constexpr char kUSDCompositionEditorItem[] = "USD Composition Editor";
+static constexpr char kUSDCompositionEditorLabel[] = "USD Composition Editor";
+#endif
+// Top-level "USD" submenu shown on the stage/gateway context menu, grouping the
+// USD Layer Editor, USD Path Editor, USD Composition Editor and Add Reference...
+// items together.
+static constexpr char kUSDMenuItem[] = "USD";
+static constexpr char kUSDMenuLabel[] = "USD";
 #endif
 static const std::string kUSDLayerEditorImage { "USD_generic.png" };
 #ifdef UFE_V3_FEATURES_AVAILABLE
@@ -118,9 +127,12 @@ const constexpr char  kReloadReferenceLabel[] = "Reload";
 const constexpr char  kReloadReferenceItem[] = "Reload";
 static constexpr char kUSDReferenceItem[] = "Reference";
 static constexpr char kUSDReferenceLabel[] = "Reference";
+static constexpr char kAddReferenceItem[] = "AddReference";
+static constexpr char kAddReferenceLabel[] = "Add Reference...";
 
 // Copied from UsdUfe::UsdContextOps
 static constexpr char kUSDAddNewPrimItem[] = "Add New Prim";
+static constexpr char kUSDAddNewPrimLabel[] = "Add New Prim";
 static constexpr char kUSDClassPrimItem[] = "Class";
 
 #ifdef UFE_V3_FEATURES_AVAILABLE
@@ -324,6 +336,49 @@ makeUSDReferenceFilePathRelativeIfRequested(const std::string& filePath, const U
     return relativePathAndSuccess.first;
 }
 
+// Prompt for a USD file, then create a new Def prim under parentPrim (named after the
+// picked file) and add the file as a reference or payload on that new prim. Used both by
+// the prim-level "Reference > Add..." item and the stage-root "Add Reference..." item.
+Ufe::UndoableCommand::Ptr _addReferenceToNewPrimCmd(const UsdPrim& parentPrim)
+{
+    if (!_prepareUSDReferenceTargetLayer(parentPrim))
+        return nullptr;
+
+    MString fileRef
+        = MGlobal::executeCommandStringResult(_selectUSDFileScript("Add USD Reference"));
+    if (fileRef.length() == 0)
+        return nullptr;
+
+    const std::string path
+        = makeUSDReferenceFilePathRelativeIfRequested(UsdMayaUtil::convert(fileRef), parentPrim);
+    if (path.empty())
+        return nullptr;
+
+    // Derive the new prim name from the referenced filename stem.
+    std::string stem = path;
+    UsdMayaUtilFileSystem::pathStripPath(stem);
+    UsdMayaUtilFileSystem::pathRemoveExtension(stem);
+    const std::string newPrimName = TfMakeValidIdentifier(stem);
+
+    const std::string refPrimPath = UsdMayaUtilFileSystem::getReferencedPrimPath();
+    const bool        asRef = UsdMayaUtilFileSystem::wantReferenceCompositionArc();
+    const bool        prepend = UsdMayaUtilFileSystem::wantPrependCompositionArc();
+    const bool        preload = !asRef && UsdMayaUtilFileSystem::wantPayloadLoaded();
+
+    return std::make_shared<UsdUfe::UsdUndoAddRefOrPayloadToNewPrimCommand>(
+        parentPrim, newPrimName, path, refPrimPath, prepend, !asRef, preload);
+}
+
+void addMayaReferece(const UsdPrim& prim, const Ufe::Path& path)
+{
+    if (!_prepareUSDReferenceTargetLayer(prim))
+        return;
+
+    MString script;
+    script.format("addMayaReferenceToUsd \"^1s\"", Ufe::PathString::string(path).c_str());
+    MGlobal::executeCommandStringResult(script, /* display = */ false, /* undoable = */ true);
+}
+
 #ifdef UFE_V4_FEATURES_AVAILABLE
 void addNewMaterialItems(const Ufe::ContextOps::ItemPath& itemPath, Ufe::ContextOps::Items& items)
 {
@@ -457,6 +512,18 @@ void executeEditAsMayaOptions(const Ufe::Path& path)
     MGlobal::executeCommand(script, /* display = */ true, /* undoable = */ true);
 }
 #endif
+
+#if defined(WANT_QT_BUILD) && defined(WANT_ADSK_USD_DEBUG_TOOLS_BUILD)
+// Open the Composition Editor on the clicked prim. Opening an editor authors
+// nothing, so this is not undoable.
+void openCompositionEditor(const Ufe::Path& path)
+{
+    MString script;
+    script.format(
+        "mayaUsdCompositionEditor -primPath \"^1s\"", Ufe::PathString::string(path).c_str());
+    MGlobal::executeCommand(script, /* display = */ true, /* undoable = */ false);
+}
+#endif
 } // namespace
 
 namespace MAYAUSD_NS_DEF {
@@ -515,17 +582,21 @@ Ufe::ContextOps::Items MayaUsdContextOps::getItems(const Ufe::ContextOps::ItemPa
             items.emplace_back(Ufe::ContextItem::kSeparator);
         }
 #ifdef WANT_QT_BUILD
-        // Top-level item - USD Layer editor (for all context op types).
         // Only available when building with Qt enabled.
-        items.emplace_back(kUSDLayerEditorItem, kUSDLayerEditorLabel, kUSDLayerEditorImage);
-#if defined(WANT_ADSK_USD_ASSET_RESOLVER_BUILD)
-        // Top-level item - USD Path Editor (Asset Resolver dialog).
-        // Only shown on the stage root (gateway type), since the dialog
-        // operates at the stage / resolver level rather than on a specific prim.
         if (_isAGatewayType) {
-            items.emplace_back(kAssetResolverDialogItem, kAssetResolverDialogLabel);
-        }
+            // Stage root: group all USD-level items (Layer Editor, Path Editor, Add
+            // Reference...) under a single "USD" submenu.
+            items.emplace_back(kUSDMenuItem, kUSDMenuLabel, Ufe::ContextItem::kHasChildren);
+        } else {
+            // Top-level items - the editor shortcuts (for prim-level context menus),
+            // kept in their own group above the actions that follow.
+            items.emplace_back(kUSDLayerEditorItem, kUSDLayerEditorLabel, kUSDLayerEditorImage);
+#if defined(WANT_ADSK_USD_DEBUG_TOOLS_BUILD)
+            items.emplace_back(
+                kUSDCompositionEditorItem, kUSDCompositionEditorLabel, kUSDLayerEditorImage);
 #endif
+            items.emplace_back(Ufe::ContextItem::kSeparator);
+        }
 #endif
 
 #ifdef UFE_V3_FEATURES_AVAILABLE
@@ -544,10 +615,10 @@ Ufe::ContextOps::Items MayaUsdContextOps::getItems(const Ufe::ContextOps::ItemPa
                 items.emplace_back(kDuplicateAsMayaItem, kDuplicateAsMayaLabel);
             }
         }
-        if (!isMayaRef && !isClassPrim) {
+        if (!isMayaRef && !isClassPrim && !_isAGatewayType) {
             items.emplace_back(kAddMayaReferenceItem, kAddMayaReferenceLabel);
+            items.emplace_back(Ufe::ContextItem::kSeparator);
         }
-        items.emplace_back(Ufe::ContextItem::kSeparator);
 #endif
 
         // Add the items from our base class here
@@ -667,6 +738,25 @@ Ufe::ContextOps::Items MayaUsdContextOps::getItems(const Ufe::ContextOps::ItemPa
                 items.emplace_back(kClearAllRefsOrPayloadsItem, kClearAllRefsOrPayloadsLabel);
             }
         }
+#ifdef WANT_QT_BUILD
+        else if (itemPath[0] == kUSDMenuItem && itemPath.size() == 1u) {
+            items.emplace_back(kUSDLayerEditorItem, kUSDLayerEditorLabel, kUSDLayerEditorImage);
+#if defined(WANT_ADSK_USD_ASSET_RESOLVER_BUILD)
+            items.emplace_back(kAssetResolverDialogItem, kAssetResolverDialogLabel);
+#endif
+#if defined(WANT_ADSK_USD_DEBUG_TOOLS_BUILD)
+            items.emplace_back(
+                kUSDCompositionEditorItem, kUSDCompositionEditorLabel, kUSDLayerEditorImage);
+#endif
+            // Keep the editor shortcuts above in their own group.
+            items.emplace_back(Ufe::ContextItem::kSeparator);
+            items.emplace_back(kAddMayaReferenceItem, kAddMayaReferenceLabel);
+            items.emplace_back(Ufe::ContextItem::kSeparator);
+            items.emplace_back(
+                kUSDAddNewPrimItem, kUSDAddNewPrimLabel, Ufe::ContextItem::kHasChildren);
+            items.emplace_back(kAddReferenceItem, kAddReferenceLabel);
+        }
+#endif
     } // Top-level items
     return items;
 }
@@ -745,7 +835,9 @@ Ufe::UndoableCommand::Ptr MayaUsdContextOps::doOpCmd(const ItemPath& itemPath)
         // EMSUSD-2499: Create Class Prim
         // Special case when adding a class prim via context menu make sure the Outliner
         // is displaying class prims.
-        if (!itemPath.empty() && (itemPath[0] == kUSDAddNewPrimItem)) {
+        if (!itemPath.empty()
+            && (itemPath[0] == kUSDAddNewPrimItem
+                || (itemPath.size() > 1u && itemPath[1] == kUSDAddNewPrimItem))) {
             // At this point we know the last item in the itemPath is the prim type to create
             auto primType = itemPath[itemPath.size() - 1];
             if (primType == kUSDClassPrimItem) {
@@ -769,50 +861,52 @@ Ufe::UndoableCommand::Ptr MayaUsdContextOps::doOpCmd(const ItemPath& itemPath)
         MGlobal::executeCommand(script);
         return nullptr;
     }
-#if defined(WANT_ADSK_USD_ASSET_RESOLVER_BUILD)
-    if (itemPath[0] == kAssetResolverDialogItem) {
-        // Passing the selected stage to the asset resolver dialog
-        auto       ufePath = ufe::stagePath(prim().GetStage());
-        const auto dagPath = MayaUsd::ufe::ufeToDagPath(ufePath);
-        auto       shapePath = dagPath.fullPathName();
-        // Open the Asset Resolver dialog (paths tab).
-        MString script;
-        script.format("assetResolverDialog -tab \"paths\" -proxyShape \"^1s\"", shapePath);
-        MGlobal::executeCommand(script, /* display = */ true, /* undoable = */ false);
+#if defined(WANT_ADSK_USD_DEBUG_TOOLS_BUILD)
+    else if (itemPath[0] == kUSDCompositionEditorItem) {
+        openCompositionEditor(path());
         return nullptr;
     }
 #endif
+    else if (itemPath.size() == 2u && itemPath[0] == kUSDMenuItem) {
+        // Stage root "USD" submenu.
+        if (itemPath[1] == kUSDLayerEditorItem) {
+            auto       ufePath = ufe::stagePath(prim().GetStage());
+            const auto dagPath = MayaUsd::ufe::ufeToDagPath(ufePath);
+            auto       shapePath = dagPath.fullPathName();
+
+            MString script;
+            script.format("mayaUsdLayerEditorWindow -proxyShape ^1s mayaUsdLayerEditor", shapePath);
+            MGlobal::executeCommand(script);
+        }
+#if defined(WANT_ADSK_USD_ASSET_RESOLVER_BUILD)
+        else if (itemPath[1] == kAssetResolverDialogItem) {
+            // Passing the selected stage to the asset resolver dialog
+            auto       ufePath = ufe::stagePath(prim().GetStage());
+            const auto dagPath = MayaUsd::ufe::ufeToDagPath(ufePath);
+            auto       shapePath = dagPath.fullPathName();
+            // Open the Asset Resolver dialog (paths tab).
+            MString script;
+            script.format("assetResolverDialog -tab \"paths\" -proxyShape \"^1s\"", shapePath);
+            MGlobal::executeCommand(script, /* display = */ true, /* undoable = */ false);
+        }
+#endif
+#if defined(WANT_ADSK_USD_DEBUG_TOOLS_BUILD)
+        else if (itemPath[1] == kUSDCompositionEditorItem) {
+            openCompositionEditor(path());
+        }
+#endif
+        else if (itemPath[1] == kAddReferenceItem) {
+            return _addReferenceToNewPrimCmd(prim());
+        } else if (itemPath[1] == kAddMayaReferenceItem) {
+            addMayaReferece(prim(), path());
+        }
+        return nullptr;
+    }
 #endif
 
     if (itemPath.size() == 2u && itemPath[0] == kUSDReferenceItem) {
         if (itemPath[1] == kAddRefToNewPrimItem) {
-            if (!_prepareUSDReferenceTargetLayer(prim()))
-                return nullptr;
-
-            MString fileRef
-                = MGlobal::executeCommandStringResult(_selectUSDFileScript("Add USD Reference"));
-            if (fileRef.length() == 0)
-                return nullptr;
-
-            const std::string path = makeUSDReferenceFilePathRelativeIfRequested(
-                UsdMayaUtil::convert(fileRef), prim());
-            if (path.empty())
-                return nullptr;
-
-            // Derive the new prim name from the referenced filename stem.
-            std::string stem = path;
-            UsdMayaUtilFileSystem::pathStripPath(stem);
-            UsdMayaUtilFileSystem::pathRemoveExtension(stem);
-            const std::string newPrimName = TfMakeValidIdentifier(stem);
-
-            const std::string refPrimPath = UsdMayaUtilFileSystem::getReferencedPrimPath();
-            const bool        asRef = UsdMayaUtilFileSystem::wantReferenceCompositionArc();
-            const bool        prepend = UsdMayaUtilFileSystem::wantPrependCompositionArc();
-            const bool        preload = !asRef && UsdMayaUtilFileSystem::wantPayloadLoaded();
-
-            return std::make_shared<UsdUfe::UsdUndoAddRefOrPayloadToNewPrimCommand>(
-                prim(), newPrimName, path, refPrimPath, prepend, !asRef, preload);
-
+            return _addReferenceToNewPrimCmd(prim());
         } else if (itemPath[1] == kAddRefOrPayloadItem) {
             if (!_prepareUSDReferenceTargetLayer(prim()))
                 return nullptr;
@@ -910,13 +1004,7 @@ Ufe::UndoableCommand::Ptr MayaUsdContextOps::doOpCmd(const ItemPath& itemPath)
         UsdUfe::WaitCursor wait;
         MGlobal::executeCommand(script, /* display = */ true, /* undoable = */ true);
     } else if (itemPath[0] == kAddMayaReferenceItem) {
-        if (!_prepareUSDReferenceTargetLayer(prim()))
-            return nullptr;
-
-        MString script;
-        script.format("addMayaReferenceToUsd \"^1s\"", Ufe::PathString::string(path()).c_str());
-        MString result = MGlobal::executeCommandStringResult(
-            script, /* display = */ false, /* undoable = */ true);
+        addMayaReferece(prim(), path());
     }
 #endif
     else if (itemPath[0] == UsdUfe::BindMaterialUndoableCommand::commandName) {

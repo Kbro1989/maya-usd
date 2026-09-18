@@ -20,6 +20,7 @@
 #include <usdUfe/ufe/UsdUndoAddPayloadCommand.h>
 #include <usdUfe/ufe/UsdUndoAddReferenceCommand.h>
 #include <usdUfe/ufe/UsdUndoPayloadCommand.h>
+#include <usdUfe/ufe/UsdUndoSelectAfterCommand.h>
 #include <usdUfe/ufe/Utils.h>
 
 #include <pxr/usd/usd/stage.h>
@@ -55,12 +56,14 @@ void UsdUndoAddRefOrPayloadToNewPrimCommand::execute()
         return;
 
     // Build a scene item for the parent prim so we can reuse the existing create-prim command.
-    const Ufe::Path parentPath
-        = stagePath(_parentPrim.GetStage()) + usdPathToUfePathSegment(_parentPrim.GetPath());
+    const Ufe::Path parentPath = _parentPrim.IsPseudoRoot()
+        ? stagePath(_parentPrim.GetStage())
+        : stagePath(_parentPrim.GetStage()) + usdPathToUfePathSegment(_parentPrim.GetPath());
     auto parentItem = UsdSceneItem::create(parentPath, _parentPrim);
 
     // Create a typeless "def" (its type composes through the arc added next).
-    auto addPrimCmd = UsdUndoAddNewPrimCommand::create(parentItem, _newPrimName, "Def");
+    auto addPrimCmd = UsdUndoSelectAfterCommand<UsdUndoAddNewPrimCommand>::create(
+        parentItem, _newPrimName, "Def");
     if (!addPrimCmd)
         return;
     _compositeCmd->append(addPrimCmd);
