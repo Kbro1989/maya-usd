@@ -9,12 +9,14 @@ set(TEST_SCRIPT_FILES
     testMayaUsdCacheId.py
     testMayaUsdInfoCommand.py
     testMayaUsdSchemaCommand.py
+    testMayaUsdStageStatistics.py
 )
 
 # Interactive Unit test scripts.
 set(INTERACTIVE_TEST_SCRIPT_FILES
     testAttributeEditorTemplate.py
     testMayaUsdInteractiveLayerEditorCommands.py
+    testMayaUsdPluginUIDeletion.py
 )
 
 foreach(script ${TEST_SCRIPT_FILES})
@@ -160,6 +162,12 @@ foreach(script ${INTERACTIVE_TEST_SCRIPT_FILES})
     # Add a ctest label to these tests for easy filtering.
     set_property(TEST ${target} APPEND PROPERTY LABELS MayaUsd)
 endforeach()
+
+#
+# -----------------------------------------------------------------------------
+# Shared usdLayerEditor component tests (C++ GTests + UFE commands python tests).
+# -----------------------------------------------------------------------------
+add_subdirectory(usdLayerEditor)
 
 #
 # -----------------------------------------------------------------------------

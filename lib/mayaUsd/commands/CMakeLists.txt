@@ -10,11 +10,11 @@ target_sources(${PROJECT_NAME}
         editTargetCommand.cpp
         layerEditorCommand.cpp
         layerEditorWindowCommand.cpp
+        mayaLayerEditorDCCFunctions.cpp
         schemaCommand.cpp
 )
 
 set(HEADERS
-        abstractLayerEditorWindow.h
         baseExportCommand.h
         baseImportCommand.h
         baseListJobContextsCommand.h
@@ -22,8 +22,9 @@ set(HEADERS
         editTargetCommand.h
         layerEditorCommand.h
         layerEditorWindowCommand.h
+        mayaLayerEditorDCCFunctions.h
         schemaCommand.h
-)
+    )
 
 if(CMAKE_UFE_V3_FEATURES_AVAILABLE)
     target_sources(${PROJECT_NAME}

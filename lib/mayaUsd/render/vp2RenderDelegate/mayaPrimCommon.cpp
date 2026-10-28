@@ -356,7 +356,7 @@ HdReprSharedPtr MayaUsdRPrim::_InitReprCommon(
     auto&       drawScene = param->GetDrawScene();
 
     // See if the primitive is instanced
-    auto delegate = drawScene.GetUsdImagingDelegate();
+    auto delegate = drawScene.GetHdSceneDelegate();
     auto instancerId = delegate->GetInstancerId(id);
     bool instanced = !instancerId.IsEmpty();
     // The additional condition below is to prevent a crash in USD function GetScenePrimPath
@@ -374,12 +374,9 @@ HdReprSharedPtr MayaUsdRPrim::_InitReprCommon(
         if (_useInstancedDisplayLayerModes && reprToken != HdVP2ReprTokens->forcedBbox
             && reprToken != HdVP2ReprTokens->forcedWire
             && reprToken != HdVP2ReprTokens->forcedUntextured) {
-            refThis.InitRepr(
-                drawScene.GetUsdImagingDelegate(), HdVP2ReprTokens->forcedBbox, dirtyBits);
-            refThis.InitRepr(
-                drawScene.GetUsdImagingDelegate(), HdVP2ReprTokens->forcedWire, dirtyBits);
-            refThis.InitRepr(
-                drawScene.GetUsdImagingDelegate(), HdVP2ReprTokens->forcedUntextured, dirtyBits);
+            refThis.InitRepr(delegate, HdVP2ReprTokens->forcedBbox, dirtyBits);
+            refThis.InitRepr(delegate, HdVP2ReprTokens->forcedWire, dirtyBits);
+            refThis.InitRepr(delegate, HdVP2ReprTokens->forcedUntextured, dirtyBits);
         }
     } else {
         // Sync display layer modes for non-instanced prims.
@@ -395,7 +392,7 @@ HdReprSharedPtr MayaUsdRPrim::_InitReprCommon(
     if (_reprOverride != kNone) {
         TfToken overrideToken = _GetOverrideToken(reprToken);
         if (!overrideToken.IsEmpty() && (overrideToken != reprToken)) {
-            refThis.InitRepr(drawScene.GetUsdImagingDelegate(), overrideToken, dirtyBits);
+            refThis.InitRepr(delegate, overrideToken, dirtyBits);
             if (curRepr) {
                 return nullptr; // if the overriden repr is already created, we can safely exit here
             }
@@ -1199,8 +1196,8 @@ bool MayaUsdRPrim::_GetMaterialPrimvars(
     primvars = material->GetRequiredPrimvars(TfToken());
 
     // Get extra primvars
-    if (material->GetSurfaceShader(HdReprTokens->smoothHull)) {
-        const auto& extraPrimvars = material->GetRequiredPrimvars(HdReprTokens->smoothHull);
+    if (material->GetSurfaceShader(HdVP2ReprTokens->smoothHull)) {
+        const auto& extraPrimvars = material->GetRequiredPrimvars(HdVP2ReprTokens->smoothHull);
         for (const auto& extraPrimvar : extraPrimvars) {
             if (std::find(primvars.begin(), primvars.end(), extraPrimvar) == primvars.end()) {
                 primvars.push_back(extraPrimvar);

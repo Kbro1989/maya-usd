@@ -18,24 +18,7 @@
 target_sources(${PROJECT_NAME}
     PRIVATE
         batchSaveLayersUIDelegate.cpp
-        componentSaveWidget.cpp
-        componentSaveWidget.h
-        dirtyLayersCountBadge.cpp
-        generatedIconButton.cpp
-        layerContentsWidget.cpp
-        layerContentsWidget.h
-        layerEditorWidget.cpp
-        layerEditorWidget.h
-        layerTreeItem.cpp
-        layerTreeItem.h
-        layerTreeItemDelegate.cpp
-        layerTreeItemDelegate.h
-        layerTreeModel.cpp
-        layerTreeModel.h
-        layerTreeView.cpp
-        layerTreeView.h
-        loadLayersDialog.cpp
-        loadLayersDialog.h
+        batchSaveLayersUIDelegate.h
         mayaCommandHook.cpp
         mayaCommandHook.h
         mayaLayerEditorWindow.cpp
@@ -44,24 +27,9 @@ target_sources(${PROJECT_NAME}
         mayaSessionState.h
         mayaQtUtils.cpp
         mayaQtUtils.h
-        pathChecker.cpp
-        pathChecker.h
-        qtUtils.cpp
-        qtUtils.h
-        resources.qrc
-        saveLayersDialog.cpp
-        saveLayersDialog.h
-        sessionState.cpp
-        sessionState.h
-        stageSelectorWidget.cpp
-        stageSelectorWidget.h
-        stringResources.cpp
-        stringResources.h
-        usdSyntaxHighlighter.cpp
-        usdSyntaxHighlighter.h
-        warningDialogs.cpp
-        warningDialogs.h
+        mayaLayerEditorUi.h
 )
+target_link_libraries(${PROJECT_NAME} PRIVATE usdLayerEditorUi)
 
 # -----------------------------------------------------------------------------
 # MSVC fix: avoid ambiguous qfloat16 arithmetic operators pulled by Qt headers
@@ -79,9 +47,14 @@ endif()
 # -----------------------------------------------------------------------------
 set(HEADERS
     batchSaveLayersUIDelegate.h
+    mayaCommandHook.h
+    mayaLayerEditorUi.h
+    mayaLayerEditorWindow.h
+    mayaQtUtils.h
+    mayaSessionState.h
 )
 
-mayaUsd_promoteHeaderList( 
+mayaUsd_promoteHeaderList(
     HEADERS
         ${HEADERS}
     BASEDIR
@@ -94,9 +67,3 @@ mayaUsd_promoteHeaderList(
 install(FILES ${HEADERS}
     DESTINATION ${CMAKE_INSTALL_PREFIX}/include/${PROJECT_NAME}/ui
 )
-
-# Install the USD syntax highlighting configuration file.
-install(FILES "usdSyntaxConfig.json"
-    DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/syntaxHighlight"
-)
-

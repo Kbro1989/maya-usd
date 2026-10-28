@@ -16,19 +16,18 @@
 
 #include "mayaCommandHook.h"
 
-#include "abstractCommandHook.h"
-#include "mayaSessionState.h"
-
 #include <mayaUsd/undo/OpUndoItems.h>
-#include <mayaUsd/utils/layerLocking.h>
-#include <mayaUsd/utils/layers.h>
 #include <mayaUsd/utils/util.h>
+#include <mayaUsdUI/ui/mayaSessionState.h>
 #include <mayaUsdUI/ui/undoChunkUtils.h>
+#include <usdLayerEditor/lib/abstractCommandHook.h>
+#include <usdLayerEditor/lib/layerLocking.h>
 
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
 
+#include <maya/MFnDependencyNode.h>
 #include <maya/MGlobal.h>
 #include <maya/MString.h>
 #include <ufe/hierarchy.h>
@@ -69,38 +68,6 @@ std::string quoteFilePathForCommand(const std::string& path)
     return quoteForCommand(path);
 }
 
-std::string getProxyShapeName(const std::string& proxyShapePath)
-{
-    std::size_t found = proxyShapePath.find_last_of("|");
-    if (std::string::npos != found) {
-        return proxyShapePath.substr(found + 1);
-    } else {
-        return proxyShapePath;
-    }
-}
-
-bool getBooleanAttributeOnProxyShape(
-    const std::string& proxyShapePath,
-    const std::string& attributeName)
-{
-    if (proxyShapePath.empty()) {
-        return false;
-    }
-
-    MObject mobj;
-    MStatus status = PXR_NS::UsdMayaUtil::GetMObjectByName(getProxyShapeName(proxyShapePath), mobj);
-    if (status == MStatus::kSuccess) {
-        MFnDependencyNode fn;
-        fn.setObject(mobj);
-        bool attribute;
-        if (PXR_NS::UsdMayaUtil::getPlugValue(fn, attributeName.c_str(), &attribute)) {
-            return attribute;
-        }
-    }
-
-    return false;
-}
-
 } // namespace
 
 namespace UsdLayerEditor {
@@ -119,12 +86,10 @@ void MayaCommandHook::setEditTarget(UsdLayer usdLayer)
 
 // starts a complex undo operation in the host app. Please use UndoContext class to safely
 // open/close
-void MayaCommandHook::openUndoBracket(const QString& name)
+void MayaCommandHook::openUndoBracket(const std::string& name)
 {
     MGlobal::executeCommand(
-        MString("undoInfo -openChunk -chunkName ") + MayaUsdUI::cleanChunkName(name.toStdString()),
-        false,
-        false);
+        MString("undoInfo -openChunk -chunkName ") + MayaUsdUI::cleanChunkName(name), false, false);
 }
 
 // closes a complex undo operation in the host app. Please use UndoContext class to safely
@@ -239,14 +204,11 @@ void MayaCommandHook::muteSubLayer(UsdLayer usdLayer, bool muteIt)
 }
 
 // lock, system-lock or unlock the given layer
-void MayaCommandHook::lockLayer(
-    UsdLayer               usdLayer,
-    MayaUsd::LayerLockType lockState,
-    bool                   includeSubLayers)
+void MayaCommandHook::lockLayer(UsdLayer usdLayer, LayerLockType lockState, bool includeSubLayers)
 {
     // Per design, we refuse to change the lock state of system-locked
     // layers through the UI.
-    if (MayaUsd::isLayerSystemLocked(usdLayer))
+    if (UsdLayerEditor::isLayerSystemLocked(usdLayer))
         return;
 
     std::string cmd;
@@ -265,7 +227,8 @@ void MayaCommandHook::refreshLayerSystemLock(UsdLayer usdLayer, bool refreshSubL
         return;
 
     MObject mobj;
-    if (PXR_NS::UsdMayaUtil::GetMObjectByName(getProxyShapeName(shapePath), mobj)
+    if (PXR_NS::UsdMayaUtil::GetMObjectByName(
+            PXR_NS::UsdMayaUtil::GetProxyShapeName(shapePath), mobj)
         != MStatus::kSuccess)
         return;
 
@@ -326,16 +289,6 @@ void MayaCommandHook::selectPrimsWithSpec(UsdLayer usdLayer)
     }
 
     MayaUsd::UfeSelectionUndoItem::select("selectPrimsWithSpec", sn);
-}
-
-bool MayaCommandHook::isProxyShapeStageIncoming(const std::string& proxyShapePath)
-{
-    return getBooleanAttributeOnProxyShape(proxyShapePath, "stageIncoming");
-}
-
-bool MayaCommandHook::isProxyShapeSharedStage(const std::string& proxyShapePath)
-{
-    return getBooleanAttributeOnProxyShape(proxyShapePath, "shareStage");
 }
 
 std::string MayaCommandHook::executeMel(const std::string& commandString, bool undoable)

@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Autodesk
+// Copyright 2026 Autodesk
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,46 @@
 //
 #include "initStringResources.h"
 
-#include "layerEditor/stringResources.h"
+#include <mayaUsd/commands/mayaLayerEditorDCCFunctions.h>
+#include <usdLayerEditor/ui/stringResources.h>
 
-namespace MAYAUSD_NS_DEF {
+#include <maya/MString.h>
+#include <maya/MStringResource.h>
+#include <maya/MStringResourceId.h>
 
-MStatus initStringResources() { return UsdLayerEditor::StringResources::registerAll(); }
+#include <string>
+#include <unordered_map>
 
-} // namespace MAYAUSD_NS_DEF
+namespace {
+
+// Keys whose Maya wording differs from the shared default.
+const std::unordered_map<std::string, const char*> kMayaOverrides {
+    // "Listener" is the 3ds Max window; Maya's equivalent is the Script Editor.
+    { "kMenuPrintToScriptEditor", "Print to Script Editor" },
+};
+
+} // namespace
+
+namespace MayaUsdUI {
+
+MStatus initStringResources()
+{
+    MStatus status { MStatus::kSuccess };
+
+    for (const auto& entry : UsdLayerEditor::StringResources::allResources()) {
+        const std::string&                               key = entry.first;
+        const UsdLayerEditor::StringResources::Resource& resource = entry.second;
+
+        const auto        override_ = kMayaOverrides.find(key);
+        const char* const text
+            = (override_ != kMayaOverrides.end()) ? override_->second : resource.value.c_str();
+
+        MStringResourceId id(UsdLayerEditor::kStringResourcePluginId, key.c_str(), text);
+        if (!MStringResource::registerString(id))
+            status = MStatus::kFailure;
+    }
+
+    return status;
+}
+
+} // namespace MayaUsdUI

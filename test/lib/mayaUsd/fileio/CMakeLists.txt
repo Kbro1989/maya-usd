@@ -12,6 +12,7 @@ set(TEST_SCRIPT_FILES
     testDisplayLayerSaveRestore.py
     testSaveMutedAnonLayer.py
     testSaveLockedAnonLayer.py
+    testSaveEditorLockedLayer.py
     testSaveMixedLocations.py
     testSaveConnectedStage.py
     testSaveUpAxisAndUnits.py
@@ -80,21 +81,8 @@ if(CMAKE_UFE_V3_FEATURES_AVAILABLE)
         DESTINATION
             ${CMAKE_CURRENT_BINARY_DIR}/UsdCustomRigSchema
     )
-    
-    execute_process(COMMAND
-                        ${Python_EXECUTABLE}
-                        ${USD_GENSCHEMA}
-                        ${CMAKE_CURRENT_BINARY_DIR}/UsdCustomRigSchema/schema.usda
-                        ${CMAKE_CURRENT_BINARY_DIR}/UsdCustomRigSchema/
-                    WORKING_DIRECTORY
-                        ${CMAKE_CURRENT_BINARY_DIR}
-                    RESULT_VARIABLE
-                        usdgen_res
-    )
-
-    if(usdgen_res EQUAL 1)
-        message(FATAL_ERROR "Schemas generation failed")
-    endif()
+    mayaUsd_gen_schema(${CMAKE_CURRENT_BINARY_DIR}/UsdCustomRigSchema/schema.usda
+                       ${CMAKE_CURRENT_BINARY_DIR}/UsdCustomRigSchema/)
 
     set(TEST_CUSTOM_RIG testCustomRig.py)
     mayaUsd_get_unittest_target(target ${TEST_CUSTOM_RIG})
@@ -180,5 +168,30 @@ if(CMAKE_UFE_V3_FEATURES_AVAILABLE)
     # Add a ctest label for easy filtering.
     set_property(TEST ${target} APPEND PROPERTY LABELS fileio)
 endif()
+
+
+set(TEST_DUMMY_TRANSLATORS_PLUGIN_FILES
+    dummyXformReaderPlugin.py
+    dummyLocatorWriterPlugin.py
+    plugInfo.json
+)
+
+foreach(file ${TEST_DUMMY_TRANSLATORS_PLUGIN_FILES})
+    file(COPY ${file} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/UsdDummyPrimTranslators")
+endforeach()
+
+mayaUsd_get_unittest_target(target testPrimTranslatorPlugins.py)
+
+mayaUsd_add_test(${target}
+    PYTHON_MODULE ${target}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    ENV
+        "MAYA_PLUG_IN_PATH=${CMAKE_CURRENT_BINARY_DIR}/UsdDummyPrimTranslators"
+        "${PXR_OVERRIDE_PLUGINPATH_NAME}=${CMAKE_CURRENT_BINARY_DIR}/UsdDummyPrimTranslators"
+        "LD_LIBRARY_PATH=${ADDITIONAL_LD_LIBRARY_PATH}"
+)
+
+set_property(TEST ${target} APPEND PROPERTY LABELS fileio)
+
 
 add_subdirectory(utils)

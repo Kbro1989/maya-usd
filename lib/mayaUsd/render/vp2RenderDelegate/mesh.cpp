@@ -1281,7 +1281,7 @@ void HdVP2Mesh::_AddNewRenderItem(
         break;
     case HdMeshGeomStyleHullEdgeOnly:
         // The hull reprs use the wireframe item for selection highlight only.
-        if (reprToken == HdReprTokens->smoothHull
+        if (reprToken == HdVP2ReprTokens->smoothHull
             || reprToken == HdVP2ReprTokens->smoothHullUntextured
             || reprToken == HdVP2ReprTokens->defaultMaterial) {
             // Share selection highlight render item between hull reprs
@@ -2203,7 +2203,7 @@ void HdVP2Mesh::_UpdateDrawItem(
         MSelectionMask selectionMask(MSelectionMask::kSelectMeshes);
 
 #ifdef MAYA_NEW_POINT_SNAPPING_SUPPORT
-        if (!isBBoxItem) {
+        if (!isBBoxItem && param->WantsSelectPointsForGravity()) {
             bool shadedUnselectedInstances
                 = !isShadedSelectedInstanceItem && !GetInstancerId().IsEmpty();
             if (_selectionStatus == kUnselected || drawScene.SnapToSelectedObjects()
@@ -2670,7 +2670,7 @@ HdVP2DrawItem::RenderItemData& HdVP2Mesh::_CreateSmoothHullRenderItem(
 
     MHWRender::MGeometry::DrawMode drawMode = static_cast<MHWRender::MGeometry::DrawMode>(
         MHWRender::MGeometry::kShaded | MHWRender::MGeometry::kTextured);
-    if (reprToken == HdReprTokens->smoothHull) {
+    if (reprToken == HdVP2ReprTokens->smoothHull) {
         drawMode = MHWRender::MGeometry::kTextured;
     } else if (reprToken == HdVP2ReprTokens->smoothHullUntextured) {
         drawMode = MHWRender::MGeometry::kShaded;

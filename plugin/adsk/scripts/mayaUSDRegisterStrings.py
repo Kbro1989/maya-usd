@@ -15,7 +15,7 @@
 
 import maya.cmds as cmds
 import maya.mel as mel
-from mayaUsdLibRegisterStrings import registerPluginResources, unregisterPluginResources, getPluginResource
+from mayaUsdLibRegisterStrings import registerPluginResources, unregisterPluginResources, getPluginResource, getMayaUsdPluginId
 
 __mayaUSDStringResources = {
     "kButtonYes": "Yes",
@@ -35,7 +35,7 @@ __mayaUSDStringResources = {
     "kMakePathRelativeToImageEditTargetLayerAnn": "Enable to activate relative pathing to your current edit target layer's directory.",
     "kMakePathRelativeToParentLayer": "Make Path Relative to Parent Layer Directory",
     "kMakePathRelativeToParentLayerAnn": "Enable to activate relative pathing to your current parent layer's directory.",
-    "kUnresolvedPath": "Path Preview:",
+    "kUnresolvedPath": "Path Preview",
     "kUnresolvedPathAnn": "This field indicates the path with the file name currently chosen in your text input. Note: This is the string that will be written out to the file in the chosen directory in order to enable portability.",
     "kCompositionArcOptions": "Composition Arc Options",
     "kPreview": "Preview",
@@ -54,7 +54,7 @@ __mayaUSDStringResources = {
     "kCreateStage": "Create",
     "kDefaultPrim": "Default Prim",
     "kDefaultPrimAnn": "As part of its metadata, each stage can identify a default prim. This is the primitive that is referenced in if you reference in a file. Right-click a root prim in a stage to set it as your default prim. Use the same method to clear a default prim once it has been set.",
-    "kExcludePrimPaths": "Exclude Prim Paths:",
+    "kExcludePrimPaths": "Exclude Prim Paths",
     "kExcludePrimPathsAnn": "Specify the path of a prim to exclude it from the viewport display. Multiple prim paths must be separated by a comma.",
     "kExcludePrimPathsSbm": "Specify the path of a prim to exclude it from the viewport display.",
     "kFileAnn": "Load in a file as the stage source.",
@@ -82,33 +82,22 @@ __mayaUSDStringResources = {
     "kStageAxisAndUnitRotateScale": "Rotate/Scale",
     "kStageAxisAndUnitOverwritePrefs": "Overwrite Maya Preferences",
     "kLoad": "Load",
-    "kLoadPayloads": "Load Payloads:",
+    "kLoadPayloads": "Load Payloads",
     "kLoadPayloadsAnn": "When on, loads all prims marked as payloads. When off, all prims marked as payloads and their children are not loaded.",
     "kLoadPayloadsSbm": "Loads prims marked as payloads",
-    "kMenuAddSublayer": "Add Sublayer",
-    "kMenuAddParentLayer": "Add Parent Layer",
-    "kMenuClear": "Clear",
-    "kMenuReload": "Reload",
     "kMenuLayerEditor": "USD Layer Editor",
     "kMenuUSDTools": "USD Tools",
     "kContextMenuLayerEditor": "USD Layer Editor",
     "kContextMenuPathEditor": "USD Path Editor",
+    "kContextMenuCompositionEditor": "USD Composition Editor",
     "kMenuLayerEditorAnn": "Organize and edit USD data in layers",
     "kMenuCompositionEditor": "USD Composition Editor",
     "kMenuCompositionEditorAnn": "Inspect the composition arcs and layer stack of the selected USD prim",
-    "kMenuLoadSublayers": "Load Sublayers...",
-    "kMenuMergeWithSublayers": "Merge with Sublayers",
-    "kMenuLock": "Lock",
-    "kMenuLockLayerAndSublayers": "Lock Layer and Sublayers",
-    "kMenuMute": "Mute",
-    "kMenuPrintToScriptEditor": "Print to Script Editor",
     "kMenuUSDRenderSetup": "USD Render Setup",
     "kMenuUSDRenderSetupEnabledAnn": "Opens USD Render Setup to adjust render settings, create render layers, and render.",
     "kMenuUSDRenderSetupDisabledAnn": "Opens USD Render Setup to adjust render settings, create render layers, and render.\nTo enable, go to Preferences > Rendering and select USD Render Setup as Preferred Render Setup System.",
     "kMenuUSDRenderSettings": "USD Render Settings",
     "kMenuUSDRenderSettingsAnn": "Opens the current render settings in USD Render Setup",
-    "kMenuRemove": "Remove",
-    "kMenuSelectPrimsWithSpec": "Select Prims With Spec",
     "kMenuStageCreateMenuError": "Could not create mayaUSD create menu",
     "kMenuStageWithNewLayer": "Stage with New Layer",
     "kMenuStageWithNewLayerAnn": "Create a new, empty USD Stage",
@@ -120,19 +109,14 @@ __mayaUSDStringResources = {
     "kMenuComponentOptionsAnn": "Open the USD Component Creator options",
     "kMenuStageSubMenu": "Universal Scene Description (USD)",
     "kMenuStageSubMenuAnn": "Create a USD stage",
-    "kMenuSaveAs": "Save As...",
     "kMenuSetAs": "Set As...",
-    "kMenuSaveEdits": "Save Edits",
-    "kMenuUnlock": "Unlock",
-    "kMenuUnlockLayerAndSublayers": "Unlock Layer and Sublayers",
-    "kMenuUnmute": "Unmute",
     "kPointInstances": "Point Instances",
     "kPurposeAnn": "Toggle purpose categories on and off to change their visibility in the viewport.",
     "kPurposeLabel": "Purpose",
     "kPurposeOption1": "Guide",
     "kPurposeOption2": "Proxy",
     "kPurposeOption3": "Render",
-    "kPrimPath": "Prim Path:",
+    "kPrimPath": "Prim Path",
     "kPrimPathAnn": "Specify the path of a prim to display it alone in the viewport. If a prim path is not specified or a matching prim path is not found, all prims in the stage are displayed.",
     "kPrimPathSbm": "Specify the path of a prim to display it alone in the viewport.",
     "kRootLayer": "Root Layer",
@@ -434,21 +418,45 @@ __mayaUSDStringResources = {
     "kReferencesRelativeToEditTargetLayerAnn": "When on, any USD references or payloads will be written as relative paths to their respective edit target layer.",
     "kFileDependenciesRelativeToEditTargetLayer": "File dependencies",
     "kFileDependenciesRelativeToEditTargetLayerAnn": "When on, any file dependencies, such as textures or Maya references will be written as relative paths to their respective edit target layer.",
+
+    # USD Details heads up display. The row labels double as the
+    # option box's checkbox labels, with the trailing colon dropped.
+    "kHudTotalPrims": "Prims:",
+    "kHudTotalPrimMesh": "Meshes:",
+    "kHudVerts": "Verts:",
+    "kHudTris": "Tris:",
+    "kHudFaces": "Faces:",
+    "kHudInstances": "Instances:",
+    "kHudTotalPrimTypes": "Prim Types:",
+    "kHudOtherTypes": "Other Types",
+    "kHudMenuLabel": "USD Details",
+    "kHudMenuAnn": "Show or hide the USD Details heads up display.",
+    "kHudOptionsLabel": "USD Details Options",
+    "kHudOptionsAnn": "Choose which USD Details are displayed, and how they are counted.",
+    "kHudUnavailableWarn": "USD Details: the counts are unavailable ({0}).",
+    "kHudOptionsDisplayFrame": "Prim Details",
+    "kHudOptionsCountingFrame": "Advanced",
+    "kHudOptPrimTypesAnn": "Show how many distinct prim types the stage has, and list the most numerous of them beneath it, one type per row.",
+    "kHudOptInstanceProxies": "Traverse instance proxies",
+    "kHudOptInstanceProxiesAnn": "When on, descend into native (instanceable) instances so instanced geometry is counted once per instance, the way the viewport draws it. When off, the traversal stops at each instance and the instanced geometry is not counted at all.",
+    "kHudOptIncludeInactive": "Include inactive prims",
+    "kHudOptIncludeInactiveAnn": "When on, count prims whose activation resolves to false, and their descendants. The viewport draws none of them.",
+    "kHudOptIncludeClasses": "Include class prims",
+    "kHudOptIncludeClassesAnn": "When on, count abstract prims: class prims and their contents. The viewport draws none of them.",
+    "kHudOptIncludeOvers": "Include over prims",
+    "kHudOptIncludeOversAnn": "When on, count undefined prims: an \"over\" with no def anywhere in its composition. The viewport draws none of them.",
+    "kHudNoRowsWarn": "USD Details: no statistics are selected for display.",
 }
 
 def getMayaUsdString(key):
-    return getPluginResource('mayaUsdPlugin', key)
+    return getPluginResource(getMayaUsdPluginId(), key)
 
 def mayaUSDRegisterStrings():
     # This function is called from the equivalent MEL proc
     # with the same name. The strings registered here and all the
     # ones registered from the MEL proc can be used in either
     # MEL or python.
-    registerPluginResources('mayaUsdPlugin', __mayaUSDStringResources)
+    registerPluginResources(getMayaUsdPluginId(), __mayaUSDStringResources)
 
 def mayaUSDUnregisterStrings():
-    # This function is called from the equivalent MEL proc
-    # with the same name. The strings registered here and all the
-    # ones registered from the MEL proc can be used in either
-    # MEL or python.
-    unregisterPluginResources('mayaUsdPlugin', __mayaUSDStringResources)
+    unregisterPluginResources(getMayaUsdPluginId(), __mayaUSDStringResources)

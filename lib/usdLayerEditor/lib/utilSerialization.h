@@ -1,0 +1,233 @@
+//
+// Copyright 2021 Autodesk
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+#ifndef USDLAYEREDITOR_UTILS_UTILSERIALIZATION_H
+#define USDLAYEREDITOR_UTILS_UTILSERIALIZATION_H
+
+#include <usdLayerEditor/lib/layerEditorAPI.h>
+
+#include <pxr/pxr.h>
+#include <pxr/usd/sdf/fileFormat.h>
+#include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usd/stageCache.h>
+
+#include <vector>
+
+// General utility functions used when serializing Usd edits during a save operation
+namespace UsdLayerEditor {
+namespace Serialization {
+
+LAYEREDITOR_PUBLIC std::string
+                   generateUniqueLayerFileName(const std::string& basename, const PXR_NS::SdfLayerRefPtr& layer);
+
+/*! \brief Queries the optionVar that decides what the internal format
+    of a .usd file should be, either "usdc" or "usda".
+ */
+LAYEREDITOR_PUBLIC std::string usdFormatArgOption();
+
+enum USDUnsavedEditsOption
+{
+    kSaveToUSDFiles = 1,
+    kSaveToSceneFile,
+    kIgnoreUSDEdits
+};
+/*! \brief Queries the optionVar that decides which saving option Maya
+    should use for Usd edits.
+ */
+LAYEREDITOR_PUBLIC USDUnsavedEditsOption serializeUsdEditsLocationOption();
+//
+///*! \brief Return if the relative-path plug is set to true on the proxy shape.
+// */
+////bool isProxyShapePathRelative(MayaUsdProxyShapeBase& proxyShape);
+//
+///*! \brief File path mode for the setNewProxyPath and isProxyPathModeRelative functions.
+// *         kProxyPathRelative makes the file path relative to the Maya scene.
+// *         kProxyPathAbsolute makes the file path absolute.
+// *         kProxyPathFollowProxyShape reads the relative-path plug of the proxy shape
+// *                                    to decide.
+// *         kProxyPathFollowOptionVar reads the mayaUsd_MakePathRelativeToSceneFile
+// *                                   options to decide.
+// */
+// enum ProxyPathMode
+//{
+//    kProxyPathRelative,
+//    kProxyPathAbsolute,
+//    kProxyPathFollowProxyShape,
+//    kProxyPathFollowOptionVar
+//};
+//
+///*! \brief Convert the proxy path mode into a boolean telling if the path should be relative.
+// *  \note the proxy node name is only required for the kProxyPathFollowProxyShape mode.
+// */
+////bool isProxyPathModeRelative(ProxyPathMode proxyPathMode, const std::wstring& proxyNodeName);
+//
+///*! \brief Utility function to update the file path attribute on the proxy shape
+//    when an anonymous root layer gets exported to disk. Also optionally updates
+//    the target layer if the anonymous layer was the target layer.
+// */
+// void setNewProxyPath(
+//    const MString&        proxyNodeName,
+//    const MString&        newValue,
+//    ProxyPathMode         proxyPathMode,
+//    const SdfLayerRefPtr& layer,
+//    bool                  isTargetLayer);
+
+struct LayerParent
+{
+    // Every layer that we are saving should have either a parent layer that
+    // we will need to remap to point to the new path, or the stage if it is an
+    // anonymous root layer.
+    PXR_NS::SdfLayerRefPtr _layerParent;
+    std::string            _objectPath;
+};
+
+struct LayerInfo
+{
+    pxr::UsdStageRefPtr stage;
+    pxr::SdfLayerRefPtr layer;
+    LayerParent         parent;
+};
+
+struct PathInfo
+{
+    std::string absolutePath;
+    bool        savePathAsRelative { false };
+    std::string customRelativeAnchor;
+};
+
+using LayerInfos = std::vector<LayerInfo>;
+
+struct StageLayersToSave
+{
+    LayerInfos                       _anonLayers;
+    std::vector<pxr::SdfLayerRefPtr> _dirtyFileBackedLayers;
+};
+//
+/*! \brief Save an layer to disk to the given file path and using the given format.
+    If the file path is empty then use the current file path of the layer.
+    If the format is empty then use the current user-selected USD format option
+    as defined by the usdFormatArgOption() function. (See above.)
+
+    If the file path is relative, then it can be made relative to either the scene
+    file (for the root layer) or its parent layer (for sub-layers). We assume the
+    caller voluntarily made the path relative.
+ */
+LAYEREDITOR_PUBLIC bool saveLayerWithFormat(
+    pxr::SdfLayerRefPtr layer,
+    const std::string&  requestedFilePath = "",
+    const std::string&  requestedFormatArg = "");
+
+/*! \brief Queries the DCC for the current "scene" folder
+ */
+LAYEREDITOR_PUBLIC std::string getSceneFolder();
+
+/*! \brief Returns a path in the scene folder for a new USD file, named after the basename and
+    not used by an existing file.
+ */
+LAYEREDITOR_PUBLIC std::string generateUniqueFileName(const std::string& basename);
+
+/*! \brief Save an anonymous layer to disk and update the sublayer path array
+    in the parent layer.
+ */
+LAYEREDITOR_PUBLIC PXR_NS::SdfLayerRefPtr saveAnonymousLayer(
+    PXR_NS::UsdStageRefPtr stage,
+    PXR_NS::SdfLayerRefPtr anonLayer,
+    LayerParent            parent,
+    const std::string&     basename,
+    std::string            formatArg = "",
+    std::string*           errorMsg = nullptr);
+
+/*! \brief Save an anonymous layer to disk and update the sublayer path array
+    in the parent layer.
+ */
+LAYEREDITOR_PUBLIC PXR_NS::SdfLayerRefPtr saveAnonymousLayer(
+    PXR_NS::UsdStageRefPtr stage,
+    PXR_NS::SdfLayerRefPtr anonLayer,
+    const PathInfo&        pathInfo,
+    LayerParent            parent,
+    std::string            formatArg = "",
+    std::string*           errorMsg = nullptr);
+
+/*! \brief Sets the up axis and linear units of the layer from the DCC scene settings.
+ *         Does nothing for a null layer or a layer that cannot be edited.
+ */
+LAYEREDITOR_PUBLIC void setLayerUpAxisAndUnits(const PXR_NS::SdfLayerRefPtr& layer);
+
+/*! \brief Update the list of sub-layers with a new layer identity.
+ *         The new sub-layer is identified by its path explicitly,
+ *         because a given layer might get referenced through multiple
+ *         different relative paths, so we cannot interrogate it about
+ *         what its path is.
+ */
+LAYEREDITOR_PUBLIC void updateSubLayer(
+    const PXR_NS::SdfLayerRefPtr& parentLayer,
+    const PXR_NS::SdfLayerRefPtr& oldSubLayer,
+    const std::string&            newSubLayerPath);
+
+/*! \brief Ensures that the filepath contains a valid USD extension.
+ */
+LAYEREDITOR_PUBLIC void ensureUSDFileExtension(std::string& filePath);
+
+/*! \brief Check the sublayer stack of the stage looking for any anonymous
+    layers that will need to be saved.
+ */
+LAYEREDITOR_PUBLIC void
+getLayersToSaveFromDCCObject(const std::string& objectPath, StageLayersToSave& layersInfo);
+
+/*! \brief Same as getLayersToSaveFromDCCObject but accepts the stage directly,
+    bypassing the UFE path-based stage lookup.
+ */
+LAYEREDITOR_PUBLIC void getLayersToSaveFromStage(
+    const PXR_NS::UsdStageRefPtr& stage,
+    const std::string&            objectPath,
+    StageLayersToSave&            layersInfo);
+
+/*! \brief Adds the render layers of the stage to the layers to save. Already done by
+    getLayersToSaveFromStage, for callers that gather the other layers some other way.
+ */
+LAYEREDITOR_PUBLIC void
+appendRenderLayers(const PXR_NS::UsdStageRefPtr& stage, StageLayersToSave& layersInfo);
+
+/*! \brief Makes the layer the edit target of the stage. Does nothing if the stage does not
+    contain the layer.
+ */
+LAYEREDITOR_PUBLIC void
+updateTargetLayer(const PXR_NS::UsdStageRefPtr& stage, const PXR_NS::SdfLayerRefPtr& layer);
+
+/*! \brief Same, for the current stage of the DCC object, given by its UFE path (not the DCC's
+    own node path). A layer of the stage that the DCC object had before its root layer was
+    saved is not part of it.
+ */
+LAYEREDITOR_PUBLIC void
+updateTargetLayer(const std::string& ufeObjectPath, const PXR_NS::SdfLayerRefPtr& layer);
+
+/*! \brief The render layers to save that may be saved: anonymous ones, and file-backed ones
+    with save permission. System-locked layers are left out.
+ */
+LAYEREDITOR_PUBLIC std::vector<PXR_NS::SdfLayerRefPtr>
+                   getSaveableRenderLayers(const PXR_NS::UsdStageRefPtr& stage);
+
+/*! \brief Saves the dirty file-backed render layers in place. Anonymous ones need a file
+    name, so they go through the save dialog instead. Returns the layers that failed to save.
+ */
+LAYEREDITOR_PUBLIC std::vector<PXR_NS::SdfLayerRefPtr>
+                   saveDirtyRenderLayers(const PXR_NS::UsdStageRefPtr& stage);
+
+} // namespace Serialization
+} // namespace UsdLayerEditor
+
+#endif // LAYEREDITOR_UTILS_UTILSERIALIZATION_H

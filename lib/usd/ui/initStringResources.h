@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Autodesk
+// Copyright 2026 Autodesk
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,19 +13,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#ifndef INIT_STRING_RESOURCES_H
-#define INIT_STRING_RESOURCES_H
+#ifndef MAYAUSD_INIT_STRING_RESOURCES_H
+#define MAYAUSD_INIT_STRING_RESOURCES_H
 
-#include <mayaUsd/mayaUsd.h>
 #include <mayaUsdUI/ui/api.h>
 
 #include <maya/MStatus.h>
 
-namespace MAYAUSD_NS_DEF {
+namespace MayaUsdUI {
 
-// register all string
+// Registers the shared layer editor's strings with Maya. The lookup that reads them back is
+// installed by UsdLayerEditor::registerLayerEditorDCCFunctions().
 MAYAUSD_UI_PUBLIC MStatus initStringResources();
 
-} // namespace MAYAUSD_NS_DEF
+} // namespace MayaUsdUI
 
-#endif // INIT_STRING_RESOURCES_H
+#endif // MAYAUSD_INIT_STRING_RESOURCES_H

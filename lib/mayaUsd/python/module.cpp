@@ -34,6 +34,7 @@ TF_WRAP_MODULE
     TF_WRAP(LayerLocking);
     TF_WRAP(LoadRules);
     TF_WRAP(MeshWriteUtils);
+    TF_WRAP(Metadata);
 #ifdef UFE_V3_FEATURES_AVAILABLE
     TF_WRAP(PrimUpdater);
     TF_WRAP(PrimUpdaterArgs);
@@ -45,6 +46,7 @@ TF_WRAP_MODULE
     TF_WRAP(ReadUtil);
     TF_WRAP(RoundTripUtil);
     TF_WRAP(StageCache);
+    TF_WRAP(StageStatistics);
     TF_WRAP(Tokens);
     TF_WRAP(TranslatorUtil);
     TF_WRAP(UsdUndoManager);

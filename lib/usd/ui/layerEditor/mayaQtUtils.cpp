@@ -16,11 +16,80 @@
 
 #include "mayaQtUtils.h"
 
+#include <mayaUsdUI/ui/mayaLayerEditorUi.h>
+#include <usdLayerEditor/lib/layerEditorDCCFunctions.h>
+
+#include <pxr/base/tf/diagnostic.h>
+
 #include <maya/MQtUtil.h>
+
+#ifdef WANT_ADSK_USD_EDIT_FORWARD_BUILD
+#include <mayaUsdUI/ui/editForwardDialog.h>
+#include <usdLayerEditor/ui/stringResources.h>
+
+#include <pxr/usd/usd/stage.h>
+
+#include <QtCore/QPointer>
+
+namespace {
+QPointer<UsdEditForwardConfig::EditForwardDialog> g_editForwardDialog;
+} // namespace
+#endif
 
 namespace UsdLayerEditor {
 
+void initializeUi()
+{
+    // The read-modify-write below assumes registerLayerEditorDCCFunctions() already ran; otherwise
+    // it writes back empty groups. isInteractiveDCCSession is always set there, so use it as the
+    // sentinel.
+    {
+        PXR_NAMESPACE_USING_DIRECTIVE
+        TF_VERIFY(
+            layerEditorDCCFunctions().environment.isInteractiveDCCSession,
+            "initializeUi() must be called after registerLayerEditorDCCFunctions().");
+    }
+    auto environment = layerEditorDCCFunctions().environment;
+    setEnvironmentFns(environment);
+
+#ifdef WANT_ADSK_USD_EDIT_FORWARD_BUILD
+    auto editForwarding = layerEditorDCCFunctions().editForwarding;
+    editForwarding.openEditForwardDialog = [](const PXR_NS::UsdStageRefPtr& stage) {
+        if (!g_editForwardDialog) {
+            g_editForwardDialog = new UsdEditForwardConfig::EditForwardDialog(
+                StringResources::getAsQString(StringResources::kConfigureEditForwardingTitle),
+                MQtUtil::mainWindow());
+        }
+        g_editForwardDialog->setActiveStage(stage);
+
+        // If the dialog was previously minimized, restore it before showing.
+        if (g_editForwardDialog->isMinimized()) {
+            g_editForwardDialog->setWindowState(
+                (g_editForwardDialog->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+        }
+
+        // Only show() a dialog that is actually hidden. Showing a saveWindowPref
+        // window re-applies its stored position, which would move an already-open
+        // dialog away from where the user last dragged it.
+        if (!g_editForwardDialog->isVisible()) {
+            g_editForwardDialog->show();
+        }
+        g_editForwardDialog->raise();
+        g_editForwardDialog->activateWindow();
+    };
+    editForwarding.isEditForwardDialogOpen
+        = []() { return g_editForwardDialog && g_editForwardDialog->isVisible(); };
+    setEditForwardingFns(editForwarding);
+#endif
+
+    if (nullptr == getQtUtils()) {
+        setQtUtils(new MayaQtUtils());
+    }
+}
+
 double MayaQtUtils::dpiScale() { return MQtUtil::dpiScale(1.0f); }
+
+QWidget* MayaQtUtils::mainWindowParent() { return MQtUtil::mainWindow(); }
 
 QIcon MayaQtUtils::createIcon(const char* iconName)
 {
@@ -42,6 +111,25 @@ QPixmap MayaQtUtils::createPixmap(QString const& pixmapName, int width, int heig
         return copy;
     }
     return QPixmap();
+}
+
+QColor MayaQtUtils::color(UiColor which) const
+{
+    switch (which) {
+    case UiColor::TreeBackground: return QColor(55, 55, 55);
+    case UiColor::LayerRowBackground: return QColor(71, 71, 71);
+    case UiColor::LayerRowText: return QColor(200, 200, 200);
+    default: return QtUtils::color(which);
+    }
+}
+
+QPalette::ColorRole MayaQtUtils::colorRole(UiColorRole which) const
+{
+    switch (which) {
+    case UiColorRole::SaveDialogPanelBackground: return QPalette::Midlight;
+    case UiColorRole::LayerContentsBackground: return QPalette::Base;
+    default: return QtUtils::colorRole(which);
+    }
 }
 
 } // namespace UsdLayerEditor

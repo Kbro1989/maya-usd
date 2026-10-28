@@ -20,6 +20,7 @@
 #include "mayaPrimCommon.h"
 #include "renderDelegate.h"
 #include "tokens.h"
+#include "usdProducer.h"
 
 #include <mayaUsd/base/tokens.h>
 #include <mayaUsd/nodes/proxyShapeBase.h>
@@ -74,6 +75,7 @@
 #endif
 
 #include <mayaUsd/ufe/Global.h>
+#include <mayaUsd/ufe/UsdStageMap.h>
 #include <mayaUsd/ufe/Utils.h>
 
 #include <usdUfe/ufe/UsdSceneItem.h>
@@ -81,6 +83,9 @@
 #include <ufe/globalSelection.h>
 #include <ufe/namedSelection.h>
 #include <ufe/observableSelection.h>
+
+#include <vector>
+
 #ifdef MAYA_HAS_DISPLAY_LAYER_API
 #include <ufe/pathString.h>
 #include <ufe/pathStringExcept.h>
@@ -95,6 +100,8 @@
 #if defined(BUILD_HDMAYA)
 #include <mayaUsd/render/mayaToHydra/utils.h>
 #endif
+
+#include <utility>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -207,7 +214,7 @@ UsdPrim GetPrimOrAncestorWithKind(const UsdPrim& prim, const TfToken& kind)
 void PopulateSelection(
     const Ufe::SceneItem::Ptr&  item,
     const Ufe::Path&            proxyPath,
-    UsdImagingDelegate&         sceneDelegate,
+    HdVP2UsdProducer&           producer,
     const HdSelectionSharedPtr& result)
 {
     // Filter out items which are not under the current proxy shape.
@@ -221,15 +228,10 @@ void PopulateSelection(
         return;
     }
 
-    SdfPath   usdPath = usdItem->prim().GetPath();
-    const int instanceIndex = usdItem->instanceIndex();
+    const SdfPath usdPath = usdItem->prim().GetPath();
+    const int     instanceIndex = usdItem->instanceIndex();
 
-#if !defined(USD_IMAGING_API_VERSION) || USD_IMAGING_API_VERSION < 11
-    usdPath = sceneDelegate.ConvertCachePathToIndexPath(usdPath);
-#endif
-
-    sceneDelegate.PopulateSelection(
-        HdSelection::HighlightModeSelect, usdPath, instanceIndex, result);
+    producer.PopulateSelection(usdPath, instanceIndex, result);
 }
 
 //! \brief  Append the selected prim paths to the result list.
@@ -285,8 +287,14 @@ void _ConfigureReprs()
         /*flatShadingEnabled=*/false,
         /*blendWireframeColor=*/true);
 
+    // Guards against HdVP2ReprTokens->smoothHull being redefined with the core token's value,
+    // which would silently reconfigure Hydra's smoothHull for every delegate in the process.
+    TF_VERIFY(
+        HdVP2ReprTokens->smoothHull != HdReprTokens->smoothHull,
+        "HdVP2ReprTokens->smoothHull must not share HdReprTokens->smoothHull's value.");
+
     // Hull desc for shaded display, edge desc for selection highlight.
-    HdMesh::ConfigureRepr(HdReprTokens->smoothHull, reprDescHull, reprDescEdge);
+    HdMesh::ConfigureRepr(HdVP2ReprTokens->smoothHull, reprDescHull, reprDescEdge);
     HdMesh::ConfigureRepr(HdVP2ReprTokens->smoothHullUntextured, reprDescHull, reprDescEdge);
 
 #ifdef HAS_DEFAULT_MATERIAL_SUPPORT_API
@@ -305,7 +313,10 @@ void _ConfigureReprs()
     // its selection highlight will be drawn through a non-forced repr
     HdMesh::ConfigureRepr(HdVP2ReprTokens->forcedUntextured, reprDescHull);
 
-    // smooth hull for untextured display
+    // smooth hull for textured and untextured display. Both must be configured explicitly:
+    // these are private VP2 tokens, so they get none of the stock configuration that
+    // HdRenderIndex installs for the HdReprTokens.
+    HdBasisCurves::ConfigureRepr(HdVP2ReprTokens->smoothHull, HdBasisCurvesGeomStylePatch);
     HdBasisCurves::ConfigureRepr(
         HdVP2ReprTokens->smoothHullUntextured, HdBasisCurvesGeomStylePatch);
 
@@ -317,6 +328,7 @@ void _ConfigureReprs()
     HdBasisCurves::ConfigureRepr(HdVP2ReprTokens->defaultMaterial, HdBasisCurvesGeomStyleWire);
 #endif
 
+    HdPoints::ConfigureRepr(HdVP2ReprTokens->smoothHull, HdPointsGeomStylePoints);
     HdPoints::ConfigureRepr(HdVP2ReprTokens->smoothHullUntextured, HdPointsGeomStylePoints);
 }
 
@@ -574,6 +586,10 @@ ProxyRenderDelegate::ProxyRenderDelegate(const MObject& obj)
 //! \brief  Destructor
 ProxyRenderDelegate::~ProxyRenderDelegate()
 {
+    // Make sure the UsdStageMap path memoization enabled for selection passes
+    // (see _Execute) cannot outlive this delegate.
+    MayaUsd::ufe::UsdStageMap::getInstance().setPathCachingEnabled(false);
+
     _ClearRenderDelegate();
 
 #ifdef MAYA_HAS_DISPLAY_LAYER_API
@@ -621,7 +637,7 @@ void ProxyRenderDelegate::_ClearRenderDelegate()
 {
     // The order of deletion matters. Some orders cause crashes.
 
-    _sceneDelegate.reset();
+    _producer.reset();
     _taskController.reset();
     _renderIndex.reset();
     _renderDelegate.reset();
@@ -698,7 +714,7 @@ void ProxyRenderDelegate::_InitRenderDelegate()
         std::call_once(reprsOnce, _ConfigureReprs);
     }
 
-    if (!_sceneDelegate) {
+    if (!_producer) {
         MProfilingScope subProfilingScope(
             HdVP2RenderDelegate::sProfilerCategory,
             MProfiler::kColorD_L1,
@@ -712,7 +728,13 @@ void ProxyRenderDelegate::_InitRenderDelegate()
             _proxyShapeData->ProxyShape()));
         const SdfPath delegateID = SdfPath::AbsoluteRootPath().AppendChild(TfToken(delegateName));
 
-        _sceneDelegate.reset(new UsdImagingDelegate(_renderIndex.get(), delegateID));
+        auto producer = HdVP2UsdProducer::Create();
+        producer->Initialize(_renderIndex.get(), delegateID);
+
+        // Assigning the member marks this object initialized, so it happens at
+        // the same point in the sequence as the scene delegate allocation it
+        // replaces.
+        _producer = std::move(producer);
 
         _taskController.reset(new HdxTaskController(
             _renderIndex.get(),
@@ -806,17 +828,18 @@ bool ProxyRenderDelegate::_Populate()
         MProfilingScope subProfilingScope(
             HdVP2RenderDelegate::sProfilerCategory, MProfiler::kColorD_L1, "Populate");
 
-        // Remove any excluded prims before populating
-        SdfPathVector excludePrimPaths = _proxyShapeData->ProxyShape()->getExcludePrimPaths();
-        for (auto& excludePrim : excludePrimPaths) {
-            SdfPath indexPath = _sceneDelegate->ConvertCachePathToIndexPath(excludePrim);
-            if (_renderIndex->HasRprim(indexPath)) {
-                _renderIndex->RemoveRprim(indexPath);
-            }
-        }
+        const SdfPathVector excludePrimPaths = _proxyShapeData->ProxyShape()->getExcludePrimPaths();
         _proxyShapeData->ExcludePrimsUpdated();
-        _sceneDelegate->Populate(_proxyShapeData->ProxyShape()->usdPrim(), excludePrimPaths);
-        _isPopulated = true;
+        // Only latch on success. A producer that bailed out has contributed
+        // nothing to the render index, and latching here would leave the proxy
+        // shape empty for the rest of the session.
+        // getPrimPath rather than usdPrim().GetPath(): the latter collapses a
+        // primPath naming no valid prim to the empty path, and the producer
+        // needs the configured path to scope the scene.
+        _isPopulated = _producer->Populate(
+            _proxyShapeData->UsdStage(),
+            _proxyShapeData->ProxyShape()->getPrimPath(),
+            excludePrimPaths);
     }
 
     return _isPopulated;
@@ -827,18 +850,20 @@ void ProxyRenderDelegate::_UpdateSceneDelegate()
 {
     TF_VERIFY(_proxyShapeData->ProxyShape());
 
-    if (!_sceneDelegate)
+    if (!_producer)
         return;
 
     MProfilingScope profilingScope(
         HdVP2RenderDelegate::sProfilerCategory, MProfiler::kColorC_L1, "UpdateSceneDelegate");
+
+    _producer->ApplyPendingUpdates();
 
     {
         MProfilingScope subProfilingScope(
             HdVP2RenderDelegate::sProfilerCategory, MProfiler::kColorC_L1, "SetTime");
 
         const UsdTimeCode timeCode = _proxyShapeData->ProxyShape()->getTime();
-        _sceneDelegate->SetTime(timeCode);
+        _producer->SetTime(timeCode);
     }
 
     // Update the root transform used to render by the delegate.
@@ -858,17 +883,17 @@ void ProxyRenderDelegate::_UpdateSceneDelegate()
     }
 
     constexpr double tolerance = 1e-9;
-    if (!GfIsClose(transform, _sceneDelegate->GetRootTransform(), tolerance)) {
+    if (!GfIsClose(transform, _producer->GetRootTransform(), tolerance)) {
         MProfilingScope subProfilingScope(
             HdVP2RenderDelegate::sProfilerCategory, MProfiler::kColorC_L1, "SetRootTransform");
-        _sceneDelegate->SetRootTransform(transform);
+        _producer->SetRootTransform(transform);
     }
 
     const bool isVisible = _proxyShapeData->ProxyDagPath().isVisible();
-    if (isVisible != _sceneDelegate->GetRootVisibility()) {
+    if (isVisible != _producer->GetRootVisibility()) {
         MProfilingScope subProfilingScope(
             HdVP2RenderDelegate::sProfilerCategory, MProfiler::kColorC_L1, "SetRootVisibility");
-        _sceneDelegate->SetRootVisibility(isVisible);
+        _producer->SetRootVisibility(isVisible);
 
         // Trigger selection update when a hidden proxy shape gets shown.
         if (isVisible) {
@@ -877,13 +902,13 @@ void ProxyRenderDelegate::_UpdateSceneDelegate()
     }
 
     const int refineLevel = _proxyShapeData->ProxyShape()->getComplexity();
-    if (refineLevel != _sceneDelegate->GetRefineLevelFallback()) {
+    if (refineLevel != _producer->GetRefineLevelFallback()) {
         MProfilingScope subProfilingScope(
             HdVP2RenderDelegate::sProfilerCategory,
             MProfiler::kColorC_L1,
             "SetRefineLevelFallback");
 
-        _sceneDelegate->SetRefineLevelFallback(refineLevel);
+        _producer->SetRefineLevelFallback(refineLevel);
     }
 }
 
@@ -940,9 +965,7 @@ void ProxyRenderDelegate::_DirtyUsdSubtree(const UsdPrim& prim)
     if (!prim.IsValid())
         return;
 
-    HdChangeTracker& changeTracker = _renderIndex->GetChangeTracker();
-
-    auto markRprimDirty = [this, &changeTracker](const UsdPrim& prim) {
+    auto markRprimDirty = [this](const UsdPrim& prim) {
         constexpr HdDirtyBits dirtyBits = HdChangeTracker::DirtyVisibility
             | HdChangeTracker::DirtyRepr | HdChangeTracker::DirtyDisplayStyle
             | MayaUsdRPrim::DirtySelectionHighlight | MayaUsdRPrim::DirtyDisplayLayers
@@ -955,7 +978,7 @@ void ProxyRenderDelegate::_DirtyUsdSubtree(const UsdPrim& prim)
                 // Point instancing prim
                 for (auto it = range.first; it != range.second; ++it) {
                     if (_renderIndex->HasRprim(it->second)) {
-                        changeTracker.MarkRprimDirty(it->second, dirtyBits);
+                        _producer->MarkRprimDirty(it->second, dirtyBits);
                     }
                 }
             } else if (prim.IsInstanceProxy()) {
@@ -964,14 +987,14 @@ void ProxyRenderDelegate::_DirtyUsdSubtree(const UsdPrim& prim)
                     InstancePrototypePath(prim.GetPrimInPrototype().GetPath(), kNativeInstancing));
                 for (auto it = range.first; it != range.second; ++it) {
                     if (_renderIndex->HasRprim(it->second)) {
-                        changeTracker.MarkRprimDirty(it->second, dirtyBits);
+                        _producer->MarkRprimDirty(it->second, dirtyBits);
                     }
                 }
             } else {
                 // Non-instanced prim
-                auto indexPath = _sceneDelegate->ConvertCachePathToIndexPath(prim.GetPath());
+                auto indexPath = _producer->ToIndexPath(prim.GetPath());
                 if (_renderIndex->HasRprim(indexPath)) {
-                    changeTracker.MarkRprimDirty(indexPath, dirtyBits);
+                    _producer->MarkRprimDirty(indexPath, dirtyBits);
                 }
             }
         }
@@ -1045,7 +1068,7 @@ void ProxyRenderDelegate::ComputeCombinedDisplayStyles(const unsigned int newDis
             } else
 #endif
                 if (newDisplayStyle & MHWRender::MFrameContext::kTextured) {
-                _combinedDisplayStyles[HdReprTokens->smoothHull] = _frameCounter;
+                _combinedDisplayStyles[HdVP2ReprTokens->smoothHull] = _frameCounter;
             } else {
                 _combinedDisplayStyles[HdVP2ReprTokens->smoothHullUntextured] = _frameCounter;
             }
@@ -1102,10 +1125,22 @@ void ProxyRenderDelegate::_Execute(const MHWRender::MFrameContext& frameContext)
         _globalListAdjustment = GetListAdjustment();
         _selectionKind = GetSelectionKind();
         _pointInstancesPickMode = GetPointInstancesPickMode();
+        // The getInstancedSelectionPath caches below are only valid within a
+        // single selection pass, so reset them at the start of each pass.
+        _instancePathBatchCache.clear();
+        _fullyBatchedRprims.clear();
+        _perHitResolvedRprims.clear();
+        _appendedSelectionItems.clear();
+        // Let UsdStageMap resolve proxy paths from its inverse map for this pass
+        // (proxyShape() is called once per pick hit), skipping the per-hit
+        // firstPath(). Disabled again on the next non-selection pass and in our
+        // destructor; the map itself is kept fresh by setDirty() on a DAG edit.
+        MayaUsd::ufe::UsdStageMap::getInstance().setPathCachingEnabled(true);
     } else {
         _globalListAdjustment = MGlobal::kReplaceList;
         _selectionKind = TfToken();
         _pointInstancesPickMode = UsdPointInstancesPickMode::PointInstancer;
+        MayaUsd::ufe::UsdStageMap::getInstance().setPathCachingEnabled(false);
     }
 
     // Work around USD issue #1516. There is a significant performance overhead caused by populating
@@ -1116,9 +1151,40 @@ void ProxyRenderDelegate::_Execute(const MHWRender::MFrameContext& frameContext)
     _changeVersions.sync(changeTracker);
 
 #ifdef MAYA_NEW_POINT_SNAPPING_SUPPORT
-    if (_selectionModeChanged || (_selectionChanged && !inSelectionPass)
-        || forcePopulateSelection) {
-        _UpdateSelectionStates();
+    // kSelectPointsForGravity is what makes the renderItem compatible with point
+    // snapping, it has to be set during a point snapping render.
+    // But when Maya resolves a DAG selection given by getInstancedSelectionPath(), a hit
+    // on a render item with kSelectPointsForGravity flag will enforce a single selection,
+    // dropping the other objects caught by e.g. a rectangle selection.
+    // So we only set the flag on the render items during point snapping to avoid that.
+    bool wantsSelectPointsForGravity = _snapToPoints;
+
+    // With ufeSelection enabled, and when not pointSnapping, getInstancedSelectionPath()
+    // populates the maya selection directly through UFE, and kSelectPointsForGravity
+    // has no effect.
+    // In this case we can leave the flag set and avoid useless updates.
+    if (_proxyShapeData->ProxyShape() && _proxyShapeData->ProxyShape()->isUfeSelectionEnabled()) {
+        wantsSelectPointsForGravity = true;
+    }
+
+    auto* param = static_cast<HdVP2RenderParam*>(_renderDelegate->GetRenderParam());
+
+    const bool wantsSelectPointsForGravityChanged
+        = param && param->UpdateWantsSelectPointsForGravity(wantsSelectPointsForGravity);
+
+    if (_selectionModeChanged || (_selectionChanged && !inSelectionPass) || forcePopulateSelection
+        || wantsSelectPointsForGravityChanged) {
+        // Render items only rebuild their selection mask when their rprim is dirtied with
+        // DirtySelectionHighlight or DirtySelectionMode.
+        // _UpdateSelectionStates normally only dirties the rprims whose selection status
+        // changed, but kSelectPointsForGravity may be set on any point-snappable render item,
+        // so when the flag requirement changes all rprims must be dirtied to update these
+        // items.
+        // This can traverse many rprims on large stages, but it only happens on transitions:
+        // - on the first selection pass after entering or leaving point snapping, while
+        //   ufeSelection is disabled,
+        // - when the enableUfeSelection attribute is toggled.
+        _UpdateSelectionStates(/*dirtyAllRprims=*/wantsSelectPointsForGravityChanged);
         _selectionChanged = false;
         _selectionModeChanged = false;
     }
@@ -1180,8 +1246,8 @@ void ProxyRenderDelegate::_Execute(const MHWRender::MFrameContext& frameContext)
 
         // if switching to textured mode, we need to update materials
         const bool neededTexturedMaterials = _needTexturedMaterials;
-        _needTexturedMaterials
-            = _combinedDisplayStyles.find(HdReprTokens->smoothHull) != _combinedDisplayStyles.end();
+        _needTexturedMaterials = _combinedDisplayStyles.find(HdVP2ReprTokens->smoothHull)
+            != _combinedDisplayStyles.end();
         if (_needTexturedMaterials && !neededTexturedMaterials) {
             auto materials = _renderIndex->GetSprimSubtree(
                 HdPrimTypeTokens->material, SdfPath::AbsoluteRootPath());
@@ -1189,7 +1255,7 @@ void ProxyRenderDelegate::_Execute(const MHWRender::MFrameContext& frameContext)
                 HdVP2Material* vp2material = static_cast<HdVP2Material*>(
                     _renderIndex->GetSprim(HdPrimTypeTokens->material, material));
 
-                vp2material->TexturedDisplayModeEnabled(_sceneDelegate.get());
+                vp2material->TexturedDisplayModeEnabled();
             }
         }
 
@@ -1199,11 +1265,36 @@ void ProxyRenderDelegate::_Execute(const MHWRender::MFrameContext& frameContext)
             // this is slow.
             auto& rprims = _renderIndex->GetRprimIds();
             for (auto path : rprims) {
-                changeTracker.MarkRprimDirty(path, dirtyBits);
+                _producer->MarkRprimDirty(path, dirtyBits);
             }
         }
 
+        // Marks withheld during _UpdateSelectionStates' sync are emitted now so
+        // this sync sees them, rather than costing a follow-up pass.
+        _producer->FlushDeferredUpdates();
+
         _engine.Execute(_renderIndex.get(), &_dummyTasks);
+
+        // Sprims can dirty rprims while they sync, e.g. HdVP2Material telling
+        // bound meshes to pick up a new shader. Those marks are withheld until
+        // the sync returns, so the rprims were not synced with them. One more
+        // pass syncs exactly those rprims, so this frame draws the new shader.
+        // This runs at most once per frame: anything that pass withholds again
+        // is left for the refresh below, which syncs it next frame.
+        if (_producer->FlushDeferredUpdates()) {
+            MProfilingScope subProfilingScope(
+                HdVP2RenderDelegate::sProfilerCategory,
+                MProfiler::kColorC_L1,
+                "Execute (deferred dirty)");
+            _engine.Execute(_renderIndex.get(), &_dummyTasks);
+        }
+    }
+
+    // Whatever is still withheld here, re-deferred by the follow-up pass or
+    // deferred by _UpdateSelectionStates in a pass that skipped the main sync,
+    // is emitted into the change tracker and needs another frame to be synced.
+    if (_producer->FlushDeferredUpdates()) {
+        _RequestRefresh();
     }
 }
 
@@ -1261,7 +1352,7 @@ void ProxyRenderDelegate::update(MSubSceneContainer& container, const MFrameCont
     // Give access to current time and subscene container to the rest of render delegate world via
     // render param's.
     auto* param = reinterpret_cast<HdVP2RenderParam*>(_renderDelegate->GetRenderParam());
-    param->BeginUpdate(container, _sceneDelegate->GetTime());
+    param->BeginUpdate(container, _producer->GetTime());
     _currentFrameContext = &frameContext;
 
     if (_Populate()) {
@@ -1299,53 +1390,21 @@ void ProxyRenderDelegate::updateSelectionGranularity(
 }
 
 // Resolves an rprimId and instanceIndex back to the original USD gprim and instance index.
-// see UsdImagingDelegate::GetScenePrimPath.
-// This version works against all the older versions of USD we care about. Once those old
-// versions go away, and we only support USD_IMAGING_API_VERSION >= 14 then we can remove
-// this function.
+// The producer owns the version-specific details.
 #if defined(USD_IMAGING_API_VERSION) && USD_IMAGING_API_VERSION >= 14
 SdfPath ProxyRenderDelegate::GetScenePrimPath(
     const SdfPath&      rprimId,
     int                 instanceIndex,
     HdInstancerContext* instancerContext) const
+{
+    return _producer->GetScenePrimPath(rprimId, instanceIndex, instancerContext);
+}
 #else
 SdfPath ProxyRenderDelegate::GetScenePrimPath(const SdfPath& rprimId, int instanceIndex) const
-#endif
 {
-#if defined(USD_IMAGING_API_VERSION) && USD_IMAGING_API_VERSION >= 16
-    // Can no longer pass ALL_INSTANCES as the instanceIndex
-    SdfPath usdPath = (instanceIndex == UsdImagingDelegate::ALL_INSTANCES)
-        ? rprimId.ReplacePrefix(_sceneDelegate->GetDelegateID(), SdfPath::AbsoluteRootPath())
-        : _sceneDelegate->GetScenePrimPath(rprimId, instanceIndex, instancerContext);
-#elif defined(USD_IMAGING_API_VERSION) && USD_IMAGING_API_VERSION >= 14
-    SdfPath usdPath = _sceneDelegate->GetScenePrimPath(rprimId, instanceIndex, instancerContext);
-#elif defined(USD_IMAGING_API_VERSION) && USD_IMAGING_API_VERSION >= 13
-    SdfPath usdPath = _sceneDelegate->GetScenePrimPath(rprimId, instanceIndex);
-#else
-    SdfPath indexPath;
-    if (drawInstID > 0) {
-        indexPath = _sceneDelegate->GetPathForInstanceIndex(rprimId, instanceIndex, nullptr);
-    } else {
-        indexPath = rprimId;
-    }
-
-    SdfPath usdPath = _sceneDelegate->ConvertIndexPathToCachePath(indexPath);
-
-    // Examine the USD path. If it is not a valid prim path, the selection hit is from a single
-    // instance Rprim and indexPath is actually its instancer Rprim id. In this case we should
-    // call GetPathForInstanceIndex() using 0 as the instance index.
-    if (!usdPath.IsPrimPath()) {
-        indexPath = _sceneDelegate->GetPathForInstanceIndex(rprimId, 0, nullptr);
-        usdPath = _sceneDelegate->ConvertIndexPathToCachePath(indexPath);
-    }
-
-    // The "Instances" point instances pick mode is not supported for
-    // USD_IMAGING_API_VERSION < 14 (core USD versions earlier than 20.08), so
-    // no using instancerContext here.
-#endif
-
-    return usdPath;
+    return _producer->GetScenePrimPath(rprimId, instanceIndex, nullptr);
 }
+#endif
 
 static std::vector<int> fillInstanceIds(unsigned int instanceCount)
 {
@@ -1366,16 +1425,7 @@ SdfPathVector ProxyRenderDelegate::GetScenePrimPaths(
     const SdfPath&   rprimId,
     std::vector<int> instanceIndexes) const
 {
-#if defined(USD_IMAGING_API_VERSION) && USD_IMAGING_API_VERSION >= 17
-    return _sceneDelegate->GetScenePrimPaths(rprimId, instanceIndexes);
-#else
-    SdfPathVector usdPaths;
-    usdPaths.reserve(instanceIndexes.size());
-    for (int instanceIndex : instanceIndexes) {
-        usdPaths.emplace_back(GetScenePrimPath(rprimId, instanceIndex));
-    }
-    return usdPaths;
-#endif
+    return _producer->GetScenePrimPaths(rprimId, instanceIndexes);
 }
 
 //! \brief  Selection for both instanced and non-instanced cases.
@@ -1419,8 +1469,68 @@ bool ProxyRenderDelegate::getInstancedSelectionPath(
     int     topLevelInstanceIndex = UsdImagingDelegate::ALL_INSTANCES;
 
 #if defined(USD_IMAGING_API_VERSION) && USD_IMAGING_API_VERSION >= 14
+    // Per-hit scene-path resolution is slow on large instanced stages. For
+    // native instancing we batch-resolve an Rprim's drawn instances once and
+    // reuse it, but defer that until a second distinct hit proves this is a
+    // multi-hit (marquee) pass so a single click still resolves only one
+    // instance. Point-instancer hits stay per-hit to keep their top-level
+    // instancer path for the "Instances"/"PointInstancer" pick modes.
     HdInstancerContext instancerContext;
-    SdfPath            usdPath = GetScenePrimPath(rprimId, instanceIndex, &instancerContext);
+    SdfPath            usdPath;
+
+    if (_perHitResolvedRprims.count(rprimId) != 0) {
+        // Point-instanced Rprim: resolve per hit to recompute instancerContext.
+        usdPath = GetScenePrimPath(rprimId, instanceIndex, &instancerContext);
+    } else {
+        const auto batchedIt = _instancePathBatchCache.find(rprimId);
+        if (batchedIt == _instancePathBatchCache.end()) {
+            // First hit: resolve it (also probes the instancer context).
+            usdPath = GetScenePrimPath(rprimId, instanceIndex, &instancerContext);
+            if (instancerContext.empty()) {
+                // Native: cache this probe, defer the full batch to a 2nd hit.
+                std::unordered_map<int, SdfPath> byInstance;
+                byInstance.emplace(instanceIndex, usdPath);
+                _instancePathBatchCache.emplace(rprimId, std::move(byInstance));
+            } else {
+                _perHitResolvedRprims.insert(rprimId);
+            }
+        } else {
+            auto&      byInstance = batchedIt->second;
+            const auto pathIt = byInstance.find(instanceIndex);
+            if (pathIt != byInstance.end()) {
+                usdPath = pathIt->second;
+            } else if (_fullyBatchedRprims.count(rprimId) != 0) {
+                // Batched already, but this instance wasn't drawn: resolve it.
+                usdPath = GetScenePrimPath(rprimId, instanceIndex, &instancerContext);
+                byInstance.emplace(instanceIndex, usdPath);
+            } else {
+                // 2nd distinct hit: multi-hit pass, so batch-resolve the rest.
+#ifdef MAYA_NEW_POINT_SNAPPING_SUPPORT
+                std::vector<int> usdInstanceIds;
+                usdInstanceIds.reserve(mayaToUsd.size());
+                for (int usdId : mayaToUsd) {
+                    if (usdId != UsdImagingDelegate::ALL_INSTANCES)
+                        usdInstanceIds.push_back(usdId);
+                }
+                if (usdInstanceIds.size() > 1) {
+                    const SdfPathVector batched = GetScenePrimPaths(rprimId, usdInstanceIds);
+                    byInstance.reserve(usdInstanceIds.size());
+                    for (size_t i = 0; i < usdInstanceIds.size() && i < batched.size(); ++i)
+                        byInstance.emplace(usdInstanceIds[i], batched[i]);
+                }
+#endif
+                _fullyBatchedRprims.insert(rprimId);
+                const auto batchedPathIt = byInstance.find(instanceIndex);
+                if (batchedPathIt != byInstance.end()) {
+                    usdPath = batchedPathIt->second;
+                } else {
+                    // Not produced by the batch: resolve it individually.
+                    usdPath = GetScenePrimPath(rprimId, instanceIndex, &instancerContext);
+                    byInstance.emplace(instanceIndex, usdPath);
+                }
+            }
+        }
+    }
 
     if (!instancerContext.empty()) {
         // Store the top-level instancer and instance index if the Rprim is the
@@ -1440,8 +1550,12 @@ bool ProxyRenderDelegate::getInstancedSelectionPath(
     const TfToken&                   selectionKind = _selectionKind;
     const UsdPointInstancesPickMode& pointInstancesPickMode = _pointInstancesPickMode;
 
-    UsdPrim       prim = _proxyShapeData->UsdStage()->GetPrimAtPath(usdPath);
-    const UsdPrim topLevelPrim = _proxyShapeData->UsdStage()->GetPrimAtPath(topLevelPath);
+    UsdPrim prim = _proxyShapeData->UsdStage()->GetPrimAtPath(usdPath);
+    // topLevelPath is only set for point instancing; skip the lookup when empty
+    // rather than paying GetPrimAtPath(SdfPath()) on every hit.
+    UsdPrim topLevelPrim;
+    if (!topLevelPath.IsEmpty())
+        topLevelPrim = _proxyShapeData->UsdStage()->GetPrimAtPath(topLevelPath);
 
     // Enforce selectability metadata.
     if (!Selectability::isSelectable(prim)) {
@@ -1508,6 +1622,14 @@ bool ProxyRenderDelegate::getInstancedSelectionPath(
         }
     }
 
+    // Many distinct pick hits resolve to the same prim (e.g. sub-mesh Rprims of
+    // one native instance). Ufe::NamedSelection de-duplicates appends, so skip
+    // the redundant createItem + append once we've emitted this resolved item.
+    const std::pair<SdfPath, int> resolvedKey(usdPath, instanceIndex);
+    if (_appendedSelectionItems.count(resolvedKey) != 0) {
+        return true;
+    }
+
     const Ufe::PathSegment pathSegment = UsdUfe::usdPathToUfePathSegment(usdPath, instanceIndex);
     auto si = Ufe::Hierarchy::createItem(_proxyShapeData->ProxyShape()->ufePath() + pathSegment);
     if (!si) {
@@ -1518,6 +1640,7 @@ bool ProxyRenderDelegate::getInstancedSelectionPath(
     auto ufeSel = Ufe::NamedSelection::get("MayaSelectTool");
     ufeSel->append(si);
 
+    _appendedSelectionItems.insert(resolvedKey);
     return true;
 }
 
@@ -1764,11 +1887,10 @@ void ProxyRenderDelegate::ColorPrefsChanged()
 void ProxyRenderDelegate::ColorManagementRefresh()
 {
     // Need to resync all color management aware materials
-    HdChangeTracker& changeTracker = _renderIndex->GetChangeTracker();
-    auto             materials
+    auto materials
         = _renderIndex->GetSprimSubtree(HdPrimTypeTokens->material, SdfPath::AbsoluteRootPath());
     for (auto material : materials) {
-        changeTracker.MarkSprimDirty(material, HdMaterial::DirtyParams);
+        _producer->MarkSprimDirty(material, HdMaterial::DirtyParams);
     }
 
     _RequestRefresh();
@@ -1790,34 +1912,33 @@ void ProxyRenderDelegate::_PopulateSelection()
     // Populate lead selection from the last item in UFE global selection.
     auto it = globalSelection->crbegin();
     if (it != globalSelection->crend()) {
-        PopulateSelection(*it, proxyPath, *_sceneDelegate, _leadSelection);
+        PopulateSelection(*it, proxyPath, *_producer, _leadSelection);
 
         // Start reverse iteration from the second last item in UFE global
         // selection and populate active selection.
         for (it++; it != globalSelection->crend(); it++) {
-            PopulateSelection(*it, proxyPath, *_sceneDelegate, _activeSelection);
+            PopulateSelection(*it, proxyPath, *_producer, _activeSelection);
         }
     }
 }
 
 /*! \brief  Notify selection change to rprims.
+    \param dirtyAllRprims  Mark every rprim dirty rather than only the selected ones.
+                           Also raised internally based on the display status.
  */
-void ProxyRenderDelegate::_UpdateSelectionStates()
+void ProxyRenderDelegate::_UpdateSelectionStates(bool dirtyAllRprims)
 {
     const MHWRender::DisplayStatus previousStatus = _displayStatus;
     _displayStatus = MHWRender::MGeometryUtilities::displayStatus(_proxyShapeData->ProxyDagPath());
 
-    SdfPathVector        rootPaths;
-    const SdfPathVector* dirtyPaths = nullptr;
+    SdfPathVector rootPaths;
 
     if (_displayStatus == MHWRender::kLead || _displayStatus == MHWRender::kActive) {
         if (_displayStatus != previousStatus) {
-            rootPaths.push_back(SdfPath::AbsoluteRootPath());
-            dirtyPaths = &_renderIndex->GetRprimIds();
+            dirtyAllRprims = true;
         }
     } else if (previousStatus == MHWRender::kLead || previousStatus == MHWRender::kActive) {
-        rootPaths.push_back(SdfPath::AbsoluteRootPath());
-        dirtyPaths = &_renderIndex->GetRprimIds();
+        dirtyAllRprims = true;
         _PopulateSelection();
     } else {
         // Append pre-update lead and active selection.
@@ -1830,14 +1951,15 @@ void ProxyRenderDelegate::_UpdateSelectionStates()
         // Append post-update lead and active selection.
         AppendSelectedPrimPaths(_leadSelection, rootPaths);
         AppendSelectedPrimPaths(_activeSelection, rootPaths);
+    }
 
-        dirtyPaths = &rootPaths;
+    if (dirtyAllRprims) {
+        rootPaths = { SdfPath::AbsoluteRootPath() };
     }
 
     if (!rootPaths.empty()) {
         // When the selection changes then we have to update all the selected render
         // items. Set a dirty flag on each of the rprims so they know what to update.
-        // Avoid trying to set dirty the absolute root as it is not a Rprim.
         HdDirtyBits dirtySelectionBits = MayaUsdRPrim::DirtySelectionHighlight;
 #ifdef MAYA_NEW_POINT_SNAPPING_SUPPORT
         // If the selection mode changes, for example into or out of point snapping,
@@ -1845,10 +1967,16 @@ void ProxyRenderDelegate::_UpdateSelectionStates()
         if (_selectionModeChanged)
             dirtySelectionBits |= MayaUsdRPrim::DirtySelectionMode;
 #endif
-        HdChangeTracker& changeTracker = _renderIndex->GetChangeTracker();
-        for (auto path : *dirtyPaths) {
-            if (_renderIndex->HasRprim(path))
-                changeTracker.MarkRprimDirty(path, dirtySelectionBits);
+        if (dirtyAllRprims) {
+            for (const auto& path : _renderIndex->GetRprimIds()) {
+                _producer->MarkRprimDirty(path, dirtySelectionBits);
+            }
+        } else {
+            // rootPaths selection may still reference paths that are no longer Rprims.
+            for (const auto& path : rootPaths) {
+                if (_renderIndex->HasRprim(path))
+                    _producer->MarkRprimDirty(path, dirtySelectionBits);
+            }
         }
 
         // now that the appropriate prims have been marked dirty trigger
@@ -1857,6 +1985,7 @@ void ProxyRenderDelegate::_UpdateSelectionStates()
         collection.SetRootPaths(rootPaths);
         _taskController->SetCollection(collection);
         _engine.Execute(_renderIndex.get(), &_dummyTasks);
+        // Anything this sync deferred is flushed by _Execute, ahead of its own.
         _taskController->SetCollection(*_defaultCollection);
     }
 }
@@ -1902,7 +2031,7 @@ void ProxyRenderDelegate::_UpdateRenderTags()
             if (changeTracker.GetRprimDirtyBits(path) & HdChangeTracker::DirtyRenderTag) {
                 // Since USD 23.02, DirtyRenderTag is not enough to provoke a sync,
                 // so we add an extra dirty flag - DirtyVisibility
-                changeTracker.MarkRprimDirty(path, HdChangeTracker::DirtyVisibility);
+                _producer->MarkRprimDirty(path, HdChangeTracker::DirtyVisibility);
             }
         }
     }
@@ -1940,7 +2069,7 @@ void ProxyRenderDelegate::_UpdateRenderTags()
             // true when a tag hasn't actually changed.
             // Since USD 23.02, DirtyRenderTag is not enough to provoke a sync,
             // so we add an extra dirty flag - DirtyVisibility
-            changeTracker.MarkRprimDirty(
+            _producer->MarkRprimDirty(
                 id, HdChangeTracker::DirtyRenderTag | HdChangeTracker::DirtyVisibility);
         }
     }
@@ -2281,7 +2410,26 @@ bool ProxyRenderDelegate::DrawRenderTag(const TfToken& renderTag) const
 
 UsdImagingDelegate* ProxyRenderDelegate::GetUsdImagingDelegate() const
 {
-    return _sceneDelegate.get();
+    return _producer ? _producer->GetUsdImagingDelegate() : nullptr;
+}
+
+HdSceneDelegate* ProxyRenderDelegate::GetHdSceneDelegate() const
+{
+    return _producer ? _producer->GetSceneDelegate() : nullptr;
+}
+
+void ProxyRenderDelegate::MarkRprimDirty(const SdfPath& indexPath, HdDirtyBits bits)
+{
+    if (_producer) {
+        _producer->MarkRprimDirty(indexPath, bits);
+    }
+}
+
+void ProxyRenderDelegate::MarkSprimDirty(const SdfPath& indexPath, HdDirtyBits bits)
+{
+    if (_producer) {
+        _producer->MarkSprimDirty(indexPath, bits);
+    }
 }
 
 #ifdef MAYA_NEW_POINT_SNAPPING_SUPPORT

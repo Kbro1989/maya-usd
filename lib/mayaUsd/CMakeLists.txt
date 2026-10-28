@@ -28,6 +28,7 @@ target_compile_definitions(${PROJECT_NAME}
         $<$<STREQUAL:${CMAKE_BUILD_TYPE},Debug>:BOOST_DEBUG_PYTHON>
         $<$<STREQUAL:${CMAKE_BUILD_TYPE},Debug>:BOOST_LINKING_PYTHON>
         $<$<BOOL:${CMAKE_WANT_VALIDATE_UNDO_ITEM}>:WANT_VALIDATE_UNDO_ITEM>
+        $<$<BOOL:${CMAKE_WANT_MAYAUSD_VP2_USE_SCENE_INDEX}>:MAYAUSD_VP2_USE_SCENE_INDEX>
         $<$<BOOL:${MAYA_ENABLE_NEW_PRIM_DELETE}>:MAYA_ENABLE_NEW_PRIM_DELETE>
         $<$<BOOL:${AdskUsdEditForward_FOUND}>:WANT_ADSK_USD_EDIT_FORWARD_BUILD>
     PRIVATE
@@ -270,13 +271,17 @@ target_link_libraries(${PROJECT_NAME}
         $<$<BOOL:${CMAKE_WANT_MATERIALX_BUILD}>:MaterialXRender>
         $<$<BOOL:${CMAKE_WANT_MATERIALX_BUILD}>:MaterialXGenShader>
         $<$<BOOL:${CMAKE_WANT_MATERIALX_BUILD}>:MaterialXGenGlsl>
+        $<$<BOOL:${CMAKE_WANT_MAYAUSD_VP2_USE_SCENE_INDEX}>:hdsi>
 )
+
+target_link_libraries(${PROJECT_NAME} PRIVATE usdLayerEditor)
 
 # -----------------------------------------------------------------------------
 # run-time search paths
 # -----------------------------------------------------------------------------
 if(IS_MACOSX OR IS_LINUX)
     mayaUsd_init_rpath(rpath "lib")
+    mayaUsd_add_rpath(rpath "${CMAKE_INSTALL_PREFIX}/lib")
     if(DEFINED MAYAUSD_TO_USD_RELATIVE_PATH)
         mayaUsd_add_rpath(rpath "../${MAYAUSD_TO_USD_RELATIVE_PATH}/lib")
     elseif(DEFINED PXR_USD_LOCATION)
